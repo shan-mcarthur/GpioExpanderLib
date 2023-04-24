@@ -103,7 +103,7 @@ void GpioExpanderButtons::Init (Adafruit_MCP23X17 *expander, uint8_t mcu_interru
     _debounceMs = debounceMs;
 
     // set up the expander module for interrupts
-    _expander->setupInterrupts(false, false, LOW);
+    _expander->setupInterrupts(true, false, LOW);
 
     // configure each of the expander module pins
     for (int i=0; i<16; i++)
