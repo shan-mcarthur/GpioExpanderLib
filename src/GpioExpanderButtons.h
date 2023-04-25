@@ -7,10 +7,11 @@
 // a couple of handy macros to deal with a single integer containing the buttons as bits (0-15)
 #define GPIOEXPANDERBUTTONS_PIN(i) (1<<i)
 #define GPIOEXPANDERBUTTONS_PIN_PRESSED(var,pos) (!((var) & (1<<(pos))))
+#define GPIOEXPANDERBUTTONS_MAX_EXPANDERS 8
 
 // task notification and queue for interrupt and background processing
-static TaskHandle_t xGpioExpanderButtonsTaskToNotify;
 static QueueHandle_t xGpioExpanderButtonEventQueue;
+static TaskHandle_t xGpioExpanderButtonsTaskToNotify;
 
 class GpioExpanderButtons
 {
@@ -24,9 +25,20 @@ class GpioExpanderButtons
         uint16_t _debounceMs;
         Adafruit_MCP23X17 *_expander;
         uint16_t _buttonPins;
+        uint8_t _interruptPin;
         uint16_t getCapturedInterrupt();
         uint8_t getLastInterruptPin();
         void clearInterrupts();
+};
+
+// global dictionary of registered expanders so that event handler can look up which one raised the interrupt
+static GpioExpanderButtons *GlobalGpioExpanderButtons[GPIOEXPANDERBUTTONS_MAX_EXPANDERS] = {};
+
+// Button press event details
+struct GpioExpanderButtonsEvent
+{
+    GpioExpanderButtons *expander;
+    uint8_t pinNumber;
 };
 
 // constructor
@@ -53,9 +65,6 @@ void GpioExpanderButtons::GpioExpanderButtonServiceTask(void *parameter)
     const TickType_t xMaxBlockTime = pdMS_TO_TICKS( 500 );
     uint32_t ulNotifiedValue;
 
-    // the inbound parameter is the pointer to the current expander class
-    GpioExpanderButtons *expander = (GpioExpanderButtons *)parameter;
-
     // continuously process new task notifications from interrupt handler
     while(1) 
     {
@@ -68,25 +77,53 @@ void GpioExpanderButtons::GpioExpanderButtonServiceTask(void *parameter)
             // flash the LED in debug mode
             digitalWrite(LED_BUILTIN, HIGH);
 #endif
-            // get the details from the GPIO expander based on the last interrupt
-            uint8_t iPin = 255;
-            iPin = expander->getLastInterruptPin();
-            if (iPin != 255)
-            {
-                // retrieve all the pin states as of the time of the last interrupt
-                allPins = expander->getCapturedInterrupt();
+            // find the correct expander
+            bool bDone = false;
+            GpioExpanderButtons *expander = nullptr;
+            uint8_t expanderNumber = 255;
 
-                // clear the interrupt, enabling the expander chip to raise a new interrupt
-                expander->clearInterrupts();
+            // loop through the array until you find one that has a pending interrupt
+            for (int i=0; i<GPIOEXPANDERBUTTONS_MAX_EXPANDERS && !bDone; i++)
+            {
+                expander = GlobalGpioExpanderButtons[i];
+                if (expander != nullptr)
+                {
+                    // check to see if the interrupt line is low
+                    if (digitalRead(expander->_interruptPin) == LOW)
+                    {
+                        // this one has an interrupt for us
+                        bDone = true;
+                        expanderNumber = i;
+                    }
+                }
             }
 
-            // check if this is a button press (versus a release)
-            if (iPin != 255 && GPIOEXPANDERBUTTONS_PIN_PRESSED(allPins, iPin))
+            // check that we found one interrupt line that was active
+            if (expanderNumber != 255)
             {
-                // send a button press to the queue
-                xQueueSend( xGpioExpanderButtonEventQueue, &iPin, portMAX_DELAY);
-            }
+                // get the details from the GPIO expander based on the last interrupt
+                uint8_t iPin = 255;
+                iPin = expander->getLastInterruptPin();
+                if (iPin != 255)
+                {
+                    // retrieve all the pin states as of the time of the last interrupt
+                    allPins = expander->getCapturedInterrupt();
 
+                    // clear the interrupt, enabling the expander chip to raise a new interrupt
+                    expander->clearInterrupts();
+                }
+
+                // check if this is a button press (versus a release)
+                if (iPin != 255 && GPIOEXPANDERBUTTONS_PIN_PRESSED(allPins, iPin))
+                {
+                    GpioExpanderButtonsEvent event;
+                    event.expander = expander;
+                    event.pinNumber = iPin;
+
+                    // send a button press to the queue
+                    xQueueSend( xGpioExpanderButtonEventQueue, &event, portMAX_DELAY);
+                }
+            }
 #if GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED == TRUE
             // clear the LED flash in debug mode
             digitalWrite(LED_BUILTIN, LOW);
@@ -101,6 +138,29 @@ void GpioExpanderButtons::Init (Adafruit_MCP23X17 *expander, uint8_t mcu_interru
     _expander = expander;
     _buttonPins = buttonPins;
     _debounceMs = debounceMs;
+    _interruptPin = mcu_interrupt_pin;
+
+    // we have to maintain a global list of expanders as there is only one interrupt routine and task notification
+    // add this instance to the global list (so that ISRs can find pins and interrogate chips)
+    bool bDone = false;
+    bool isFirstOne = false;
+
+    for (int i=0; i<GPIOEXPANDERBUTTONS_MAX_EXPANDERS && !bDone; i++)
+    {
+        // check if we are at the end of the array yet (nullptr)
+        if (GlobalGpioExpanderButtons[i] == nullptr)
+        {
+            if (i == 0)
+            {
+                // this is the first one added.  Remember this for later
+                isFirstOne = true;
+            }
+
+            // add this to the list
+            GlobalGpioExpanderButtons[i] = this;
+            bDone = true;
+        }
+    }
 
     // set up the expander module for interrupts
     _expander->setupInterrupts(true, false, LOW);
@@ -124,17 +184,21 @@ void GpioExpanderButtons::Init (Adafruit_MCP23X17 *expander, uint8_t mcu_interru
     pinMode(mcu_interrupt_pin, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(mcu_interrupt_pin), GpioExpanderButtons::GpioExpanderInterrupt, FALLING);
 
-    // initiate background task to handle the button presses
-    xTaskCreate(
-              GpioExpanderButtons::GpioExpanderButtonServiceTask,  // Function to be called
-              "Service Button Events",   // Name of task
-              2048,         // Stack size (bytes in ESP32, words in FreeRTOS)
-              (void *)this,         // Parameter to pass to function
-              1,            // Task priority (0 to configMAX_PRIORITIES - 1)
-              &xGpioExpanderButtonsTaskToNotify);         // Task handle
+    // we only need one background task handling the notifications from the interrupt
+    if (isFirstOne)
+    {
+        // initiate background task to handle the button presses
+        xTaskCreate(
+                GpioExpanderButtons::GpioExpanderButtonServiceTask,  // Function to be called
+                "Service Button Events",   // Name of task
+                3000,         // Stack size (bytes in ESP32, words in FreeRTOS)
+                NULL,         // Parameter to pass to function
+                1,            // Task priority (0 to configMAX_PRIORITIES - 1)
+                &xGpioExpanderButtonsTaskToNotify);         // Task handle
 
-    // initialize a queue to use for the button press events
-    xGpioExpanderButtonEventQueue = xQueueCreate(50, sizeof(uint8_t));
+        // initialize a queue to use for the button press events
+        xGpioExpanderButtonEventQueue = xQueueCreate(50, sizeof(GpioExpanderButtonsEvent));
+    }
 }
 
 // private method to access the interrupt details from the event handler task

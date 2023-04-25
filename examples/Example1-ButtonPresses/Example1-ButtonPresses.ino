@@ -1,12 +1,12 @@
 #include <Arduino.h>
 
-// flash BUILTIN_LED on button press for debug purposes
+// debug macro to enable flashing BUILTIN_LED on button events
 #define GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED TRUE
 
 #include <Adafruit_MCP23X17.h>
 #include "GpioExpanderButtons.h"
 
-// Pins
+// Pins for interrupt
 #define EXPANDER_INT_PIN 4      // microcontroller pin attached to INTA/B
 
 // global variables for GPIO expander
@@ -41,14 +41,14 @@ void loop()
   while (uxQueueMessagesWaiting(xGpioExpanderButtonEventQueue))
   {
     // retrieve the next button event from the queue and process it
-    uint8_t pin;
+    GpioExpanderButtonsEvent event;
 
     // retrieve the event from the queue and obtain the pin info
-    xQueueReceive(xGpioExpanderButtonEventQueue, &pin, portMAX_DELAY);
+    xQueueReceive(xGpioExpanderButtonEventQueue, &event, portMAX_DELAY);
     
-    // process the pin
+    // dump the event details
     Serial.print ("pin ");
-    Serial.print (pin);
+    Serial.print (event.pinNumber);
     Serial.println (" pressed");
   }
 }
