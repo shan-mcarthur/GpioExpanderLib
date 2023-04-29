@@ -7,7 +7,7 @@
 #include "GpioExpanderButtons.h"
 
 // Pins for interrupt
-#define EXPANDER_INT_PIN 4      // microcontroller pin attached to INTA/B
+#define EXPANDER_INT_PIN 14      // microcontroller pin attached to INTA/B
 
 // global variables for GPIO expander
 Adafruit_MCP23X17 mcp;

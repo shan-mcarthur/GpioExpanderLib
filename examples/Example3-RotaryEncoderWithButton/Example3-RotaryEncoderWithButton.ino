@@ -1,6 +1,10 @@
 #include <Arduino.h>
+
+// debug macro to enable flashing BUILTIN_LED on button events
+#define GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED TRUE
+
 #include <Adafruit_MCP23X17.h>
-#include "../../../src/GpioExpanderLib.h"
+#include "GpioExpanderButtons.h"
 
 // Pins for interrupt
 #define EXPANDER_INT_PIN 14      // microcontroller pin attached to INTA/B
