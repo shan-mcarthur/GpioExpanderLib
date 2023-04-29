@@ -4,10 +4,12 @@
 #include <Arduino.h>
 #include <Adafruit_MCP23X17.h>
 
+#define GPIOEXPANDER_MAX_EXPANDERS 8
+
 // a couple of handy macros to deal with a single integer containing the buttons as bits (0-15)
 #define GPIOEXPANDERBUTTONS_PIN(i) (1<<i)
 #define GPIOEXPANDERBUTTONS_PIN_PRESSED(var,pos) (!((var) & (1<<(pos))))
-#define GPIOEXPANDER_MAX_EXPANDERS 8
+#define GPIOEXPANDERBUTTONS_PIN_STATE(var,pos) (((var) & (1<<(pos)))!=0?HIGH:LOW)
 
 // task notification and queue for interrupt and background processing
 static QueueHandle_t xGpioExpanderEventQueue;
@@ -15,19 +17,26 @@ static TaskHandle_t xGpioExpanderTaskToNotify;
 
 struct GpioExpanderButton
 {
+    bool isUsed = false;
     uint8_t pin;
 };
 
 struct GpioExpanderRotaryEncoder
 {
+    bool isUsed = false;
     uint8_t pin1;
     uint8_t pin2;
+    unsigned long pin1TimeMs;
+    unsigned long pin2TimeMs;
+    unsigned long pin1TransitionTimeMs;
+    unsigned long pin2TransitionTimeMs;
 };
 
 class GpioExpander
 {
     private:
         static void IRAM_ATTR GpioExpanderInterrupt();
+        static void GpioExpanderServiceTask(void *parameter);  
         uint8_t _interruptPin;
         uint8_t _maxButtons;
         uint8_t _maxRotaryEncoders;
@@ -37,27 +46,22 @@ class GpioExpander
     public: 
         GpioExpander(uint8_t maxButtons=16, uint8_t maxRotaryEncoders=8);
         void Init(Adafruit_MCP23X17 *expander, uint8_t interruptPin);
-        void AddButton(uint8_t pin);
-        void AddRotaryEncoder (uint8_t pin1, uint8_t pin2);
+        GpioExpanderButton* AddButton(uint8_t pin);
+        GpioExpanderRotaryEncoder* AddRotaryEncoder (uint8_t pin1, uint8_t pin2);
         Adafruit_MCP23X17 *_expander;
+        uint8_t GetMaxPins() { return 16; } //maximum number of pins on this expander
         uint8_t GetMaxButtons() { return _maxButtons; }
         uint8_t GetInterruptPin() { return _interruptPin; }
         uint8_t GetMaxRotaryEncoders() { return _maxRotaryEncoders;}
         uint16_t getCapturedInterrupt();
         uint8_t getLastInterruptPin();
         void clearInterrupts();
-
+        GpioExpanderButton *GetButton(uint8_t index) { if  (index < GetMaxButtons()) {return &_buttons[index];}else{return (GpioExpanderButton *)nullptr;}};
+        GpioExpanderRotaryEncoder *GetRotaryEncoder(uint8_t index) { if  (index < GetMaxRotaryEncoders()) {return &_rotaryEncoders[index];}else{return (GpioExpanderRotaryEncoder *)nullptr;}};
 };
 
 // global dictionary of registered expanders so that event handler can look up which one raised the interrupt
 static GpioExpander *GlobalGpioExpanders[GPIOEXPANDER_MAX_EXPANDERS] = {};
-
-// Button press event details
-struct GpioExpanderEvent
-{
-    GpioExpander *expander;
-    uint8_t pinNumber;
-};
 
 // constructor
 GpioExpander::GpioExpander(uint8_t maxButtons, uint8_t maxRotaryEncoders)
@@ -88,6 +92,104 @@ void IRAM_ATTR GpioExpander::GpioExpanderInterrupt()
 }
 
 
+// event details
+struct GpioExpanderEvent
+{
+    GpioExpander *expander;
+    uint8_t pinNumber;
+};
+
+#include "GpioExpanderButtonHandler.h"
+#include "GpioExpanderRotaryEncoderHandler.h"
+void GpioExpander::GpioExpanderServiceTask(void *parameter) 
+{
+    uint16_t allPins;   //pin status while this interrupt occured
+    static uint32_t thread_notification;
+    const TickType_t xMaxBlockTime = pdMS_TO_TICKS( 500 );
+    uint32_t ulNotifiedValue;
+
+    // continuously process new task notifications from interrupt handler
+    while(1) 
+    {
+        // wait for a task notification raised from the interrupt handler
+        thread_notification = xTaskNotifyWait(pdTRUE, ULONG_MAX, &ulNotifiedValue, portMAX_DELAY);
+
+        if (thread_notification == pdPASS)
+        {
+#if GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED == TRUE
+            // flash the LED in debug mode
+            digitalWrite(LED_BUILTIN, HIGH);
+#endif
+            // find the correct expander
+            bool bDone = false;
+            GpioExpander *expander = nullptr;
+            uint8_t expanderNumber = 255;
+
+            // loop through the array until you find one that has a pending interrupt
+            for (int i=0; i<GPIOEXPANDER_MAX_EXPANDERS && !bDone; i++)
+            {
+                expander = GlobalGpioExpanders[i];
+                if (expander != nullptr)
+                {
+                    // check to see if the interrupt line is low
+                    if (digitalRead(expander->GetInterruptPin()) == LOW)
+                    {
+                        // this one has an interrupt for us
+                        bDone = true;
+                        expanderNumber = i;
+                    }
+                }
+            }
+
+            // check that we found one interrupt line that was active
+            if (expanderNumber != 255)
+            {
+                // get the details from the GPIO expander based on the last interrupt
+                uint8_t pin = 255;
+                pin = expander->getLastInterruptPin();
+                if (pin != 255)
+                {
+                    // retrieve all the pin states as of the time of the last interrupt
+                    allPins = expander->getCapturedInterrupt();
+
+                    // clear the interrupt, enabling the expander chip to raise a new interrupt
+                    expander->clearInterrupts();
+                }
+
+                // find out which device is attached to this pin
+                // check for the buttons
+                for (uint8_t i=0; i<expander->GetMaxButtons(); i++)
+                {
+                    GpioExpanderButton *device = expander->GetButton(i);
+                    if (device != nullptr && device->isUsed && device->pin == pin)
+                    {
+                        GpioExpanderButtonHandler(expander, pin, device, GPIOEXPANDERBUTTONS_PIN_STATE(allPins, device->pin));
+                        break;
+                    }
+                }
+
+                // check for rotary encoders
+                for (uint8_t i=0; i<expander->GetMaxRotaryEncoders(); i++)
+                {
+                    GpioExpanderRotaryEncoder *device = expander->GetRotaryEncoder(i);
+                    if (device != nullptr && device->isUsed && (device->pin1 == pin || device->pin2 == pin))
+                    {
+                        GpioExpanderRotaryEncoderHandler(expander, pin, device, 
+                                GPIOEXPANDERBUTTONS_PIN_STATE(allPins, device->pin1), 
+                                GPIOEXPANDERBUTTONS_PIN_STATE(allPins, device->pin2));
+                        break;
+                    }
+                }
+
+            }
+#if GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED == TRUE
+            // clear the LED flash in debug mode
+            digitalWrite(LED_BUILTIN, LOW);
+#endif
+        }
+    }
+}
+
 void GpioExpander::Init(Adafruit_MCP23X17 *expander, uint8_t interruptPin)
 {
     // transfer parameters to private members of the class
@@ -117,7 +219,33 @@ void GpioExpander::Init(Adafruit_MCP23X17 *expander, uint8_t interruptPin)
     }
 
     // set up the expander module for interrupts
-    _expander->setupInterrupts(true, false, LOW);
+    _expander->setupInterrupts(true, false, CHANGE);
+
+    // configure each of the buttons for expander interrupts
+    for (int i=0; i<GetMaxButtons(); i++)
+    {
+        // check if this pin is a button
+        if (_buttons[i].isUsed)
+        {
+            // set the button pin mode to input with a pullup resistor, and enable interrupts on state change
+            _expander->pinMode(_buttons[i].pin, INPUT_PULLUP);
+            _expander->setupInterruptPin(_buttons[i].pin, CHANGE);
+        }
+    }
+
+    // configure each of the rotary encoders for expander interrupts
+    for (int i=0; i<GetMaxRotaryEncoders(); i++)
+    {
+        // check if this slot is used
+        if (_rotaryEncoders[i].isUsed)
+        {
+            // set the pin mode to input with a pullup resistor, and enable interrupts on state change
+            _expander->pinMode(_rotaryEncoders[i].pin1, INPUT_PULLUP);
+            _expander->setupInterruptPin(_rotaryEncoders[i].pin1, CHANGE);
+            _expander->pinMode(_rotaryEncoders[i].pin2, INPUT_PULLUP);
+            _expander->setupInterruptPin(_rotaryEncoders[i].pin2, CHANGE);
+        }
+    }
 
     // clear any pending interrupts
     _expander->clearInterrupts();
@@ -125,6 +253,25 @@ void GpioExpander::Init(Adafruit_MCP23X17 *expander, uint8_t interruptPin)
     // configure MCU pin that will receive the interrupt from the GPIO expander
     pinMode(_interruptPin, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(_interruptPin), GpioExpander::GpioExpanderInterrupt, FALLING);
+
+    // we only need one background task for all modules handling the notifications from the interrupt
+    if (isFirstOne)
+    {
+        // initiate background task to handle the button presses and rotary events
+        xTaskCreate(
+                GpioExpander::GpioExpanderServiceTask,  // Function to be called
+                "GpioExpander Module Events",   // Name of task
+                3000,         // Stack size (bytes in ESP32, words in FreeRTOS)
+                NULL,         // Parameter to pass to function
+                1,            // Task priority (0 to configMAX_PRIORITIES - 1)
+                &xGpioExpanderTaskToNotify);         // Task handle
+
+        // initialize a queue to use for the button press events
+        xGpioExpanderButtonEventQueue = xQueueCreate(50, sizeof(GpioExpanderButtonEvent));
+
+        // initialize a queue to use for the rotary encoder events
+        xGpioExpanderRotaryEncoderEventQueue = xQueueCreate(50, sizeof(GpioExpanderRotaryEncoderEvent));
+    }
 }
 
 // access the interrupt details from the event handler task
@@ -144,5 +291,45 @@ void GpioExpander::clearInterrupts()
 {
     _expander->clearInterrupts();
 }
+
+GpioExpanderButton* GpioExpander::AddButton(uint8_t pin)
+{
+    for (uint8_t i=0; i<GetMaxButtons(); i++)
+    {
+        if (_buttons[i].isUsed == false)
+        {
+            _buttons[i].pin = pin;
+            _buttons[i].isUsed = true;
+            return &_buttons[i];
+        }
+        else if(_buttons[i].pin == pin)
+        {
+            // this is a duplicate
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+
+GpioExpanderRotaryEncoder* GpioExpander::AddRotaryEncoder (uint8_t pin1, uint8_t pin2)
+{
+    for (uint8_t i=0; i<GetMaxRotaryEncoders(); i++)
+    {
+        if (_rotaryEncoders[i].isUsed == false)
+        {
+            _rotaryEncoders[i].pin1 = pin1;
+            _rotaryEncoders[i].pin2 = pin2;
+            _rotaryEncoders[i].isUsed = true;
+            return &_rotaryEncoders[i];
+        }
+        else if(_rotaryEncoders[i].pin1 == pin1 || _rotaryEncoders[i].pin2 == pin1 
+            || _rotaryEncoders[i].pin1 == pin2 || _rotaryEncoders[i].pin2 == pin2)
+        {
+            // this is a duplicate
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+
 #endif  // GPIOEXPANDERLIB_H
-#include "GpioExpanderButtons.h"

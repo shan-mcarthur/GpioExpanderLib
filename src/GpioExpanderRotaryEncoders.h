@@ -5,7 +5,6 @@
 #include <Adafruit_MCP23X17.h>
 
 #define GPIOEXPANDER_MAX_EXPANDERS 8
-#define GPIOEXPANDERBUTTONS_PIN_STATE(var,pos) (((var) & (1<<(pos)))!=0?true:false)
 
 static TaskHandle_t xGpioExpanderRotaryTaskToNotify;
 
