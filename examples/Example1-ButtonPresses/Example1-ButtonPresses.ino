@@ -11,7 +11,7 @@
 
 // global variables for GPIO expander
 Adafruit_MCP23X17 mcp;
-GpioExpanderButtons expander;
+GpioExpander expander;
 
 void setup() 
 {
@@ -32,7 +32,11 @@ void setup()
                 | GPIOEXPANDERBUTTONS_PIN(1) 
                 | GPIOEXPANDERBUTTONS_PIN(2)
                 | GPIOEXPANDERBUTTONS_PIN(3);
-  expander.Init(&mcp, EXPANDER_INT_PIN, pins);
+  expander.AddButton(0);
+  expander.AddButton(1);
+  expander.AddButton(2);
+  expander.AddButton(3);
+  expander.Init(&mcp, EXPANDER_INT_PIN);
 }
 
 void loop() 
@@ -41,14 +45,14 @@ void loop()
   while (uxQueueMessagesWaiting(xGpioExpanderButtonEventQueue))
   {
     // retrieve the next button event from the queue and process it
-    GpioExpanderButtonsEvent event;
+    GpioExpanderButtonEvent event;
 
     // retrieve the event from the queue and obtain the pin info
     xQueueReceive(xGpioExpanderButtonEventQueue, &event, portMAX_DELAY);
     
     // dump the event details
     Serial.print ("pin ");
-    Serial.print (event.pinNumber);
+    Serial.print (event.pin);
     Serial.println (" pressed");
   }
 }
