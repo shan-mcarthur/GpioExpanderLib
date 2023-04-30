@@ -15,10 +15,12 @@
 static QueueHandle_t xGpioExpanderEventQueue;
 static TaskHandle_t xGpioExpanderTaskToNotify;
 
+
 struct GpioExpanderButton
 {
     bool isUsed = false;
     uint8_t pin;
+    uint8_t mode = LOW;  //CHANGE, LOW, or HIGH
 };
 
 struct GpioExpanderRotaryEncoder
@@ -46,7 +48,7 @@ class GpioExpander
     public: 
         GpioExpander(uint8_t maxButtons=16, uint8_t maxRotaryEncoders=8);
         void Init(Adafruit_MCP23X17 *expander, uint8_t interruptPin);
-        GpioExpanderButton* AddButton(uint8_t pin);
+        GpioExpanderButton* AddButton(uint8_t pin, uint8_t mode=LOW);
         GpioExpanderRotaryEncoder* AddRotaryEncoder (uint8_t pin1, uint8_t pin2);
         Adafruit_MCP23X17 *_expander;
         uint8_t GetMaxPins() { return 16; } //maximum number of pins on this expander
@@ -97,6 +99,7 @@ struct GpioExpanderEvent
 {
     GpioExpander *expander;
     uint8_t pinNumber;
+    uint8_t state;
 };
 
 #include "GpioExpanderButtonHandler.h"
@@ -292,14 +295,21 @@ void GpioExpander::clearInterrupts()
     _expander->clearInterrupts();
 }
 
-GpioExpanderButton* GpioExpander::AddButton(uint8_t pin)
+GpioExpanderButton* GpioExpander::AddButton(uint8_t pin, uint8_t mode)
 {
+    // validate the mode
+    if (mode != CHANGE && mode != LOW && mode!=HIGH)
+    {
+        return nullptr;
+    }
+
     for (uint8_t i=0; i<GetMaxButtons(); i++)
     {
         if (_buttons[i].isUsed == false)
         {
             _buttons[i].pin = pin;
             _buttons[i].isUsed = true;
+            _buttons[i].mode = mode;
             return &_buttons[i];
         }
         else if(_buttons[i].pin == pin)

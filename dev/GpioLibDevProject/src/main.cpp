@@ -28,7 +28,7 @@ void setup()
 
   // initialize the button library with the set of pins to support as buttons
   expander.AddRotaryEncoder(0, 1);
-  expander.AddButton(2);
+  expander.AddButton(2, CHANGE);
   expander.Init(&mcp, EXPANDER_INT_PIN);
 }
 
@@ -46,7 +46,14 @@ void loop()
     // dump the event details
     Serial.print ("pin ");
     Serial.print (event.pin);
-    Serial.println (" pressed");
+    if (event.event == Pressed)
+    {
+      Serial.println(" Pressed");
+    }
+    else
+    {
+      Serial.println(" Released");
+    }
   }
 
  // process all pending rotary encoder events in the queue

@@ -19,13 +19,25 @@ void GpioExpanderButtonHandler(GpioExpander* expander, uint16_t pin, GpioExpande
     // flash the LED in debug mode
     digitalWrite(LED_BUILTIN, HIGH);
 #endif
+    
+    bool track = false;
+
+    // check the mode for this device
+    if ((device->mode == LOW || device->mode == CHANGE) && state == LOW)
+    {
+        track = true;
+    }
+    else if ((device->mode == HIGH || device->mode == CHANGE) && state == HIGH)
+    {
+        track = true;
+    }
     // check if this is a button press (versus a release)
-    if (state == LOW)
+    if (track)
     {
         GpioExpanderButtonEvent event;
         event.expander = expander;
         event.pin = pin;
-        event.event = Pressed;
+        event.event = (state == LOW)?Pressed: Released;
 
         // send a button press to the queue
         xQueueSend( xGpioExpanderButtonEventQueue, &event, portMAX_DELAY);
