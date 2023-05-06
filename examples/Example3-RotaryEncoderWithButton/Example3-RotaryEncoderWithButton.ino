@@ -31,7 +31,7 @@ void setup()
   }
 
   // initialize the button library with the set of pins to support as buttons
-  expander.AddRotaryEncoder(0, 1);
+  expander.AddRotaryEncoder(0, 1, false);  // this is for rotary encoders that don't have a full HIGH->LOW->HIGH cycle between detents
   expander.AddButton(2);
   expander.Init(&mcp, EXPANDER_INT_PIN);
 }

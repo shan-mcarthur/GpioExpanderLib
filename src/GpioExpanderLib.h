@@ -15,12 +15,29 @@
 static QueueHandle_t xGpioExpanderEventQueue;
 static TaskHandle_t xGpioExpanderTaskToNotify;
 
+void print_binary (uint8_t n)
+  {
+    uint8_t i;
+    for (i = 1 << 7; i > 0; i = i / 2)
+    {
+      if((n & i) != 0)
+      {
+        Serial.print("1");
+      }
+      else
+      {
+        Serial.print("0");
+      }
+    }
+  }
 
 struct GpioExpanderButton
 {
     bool isUsed = false;
     uint8_t pin;
     uint8_t mode = LOW;  //CHANGE, LOW, or HIGH
+    uint8_t lastState;
+    unsigned long lastStateChange;
 };
 
 struct GpioExpanderRotaryEncoder
@@ -28,10 +45,15 @@ struct GpioExpanderRotaryEncoder
     bool isUsed = false;
     uint8_t pin1;
     uint8_t pin2;
+    bool fullCycleBetweenDetents;
+    unsigned long debounceMs;
     unsigned long pin1TimeMs;
     unsigned long pin2TimeMs;
     unsigned long pin1TransitionTimeMs;
     unsigned long pin2TransitionTimeMs;
+    uint8_t pin1State;
+    uint8_t pin2State;
+    uint8_t index;
 };
 
 class GpioExpander
@@ -49,7 +71,7 @@ class GpioExpander
         GpioExpander(uint8_t maxButtons=16, uint8_t maxRotaryEncoders=8);
         void Init(Adafruit_MCP23X17 *expander, uint8_t interruptPin);
         GpioExpanderButton* AddButton(uint8_t pin, uint8_t mode=LOW);
-        GpioExpanderRotaryEncoder* AddRotaryEncoder (uint8_t pin1, uint8_t pin2);
+        GpioExpanderRotaryEncoder* AddRotaryEncoder (uint8_t pin1, uint8_t pin2, bool fullCycleBetweenDetents = false, unsigned long debounceMs = 200);
         Adafruit_MCP23X17 *_expander;
         uint8_t GetMaxPins() { return 16; } //maximum number of pins on this expander
         uint8_t GetMaxButtons() { return _maxButtons; }
@@ -57,6 +79,7 @@ class GpioExpander
         uint8_t GetMaxRotaryEncoders() { return _maxRotaryEncoders;}
         uint16_t getCapturedInterrupt();
         uint8_t getLastInterruptPin();
+        uint8_t digitalRead(uint8_t pin);
         void clearInterrupts();
         GpioExpanderButton *GetButton(uint8_t index) { if  (index < GetMaxButtons()) {return &_buttons[index];}else{return (GpioExpanderButton *)nullptr;}};
         GpioExpanderRotaryEncoder *GetRotaryEncoder(uint8_t index) { if  (index < GetMaxRotaryEncoders()) {return &_rotaryEncoders[index];}else{return (GpioExpanderRotaryEncoder *)nullptr;}};
@@ -135,7 +158,7 @@ void GpioExpander::GpioExpanderServiceTask(void *parameter)
                 if (expander != nullptr)
                 {
                     // check to see if the interrupt line is low
-                    if (digitalRead(expander->GetInterruptPin()) == LOW)
+                    if (expander->digitalRead(expander->GetInterruptPin()) == LOW)
                     {
                         // this one has an interrupt for us
                         bDone = true;
@@ -166,23 +189,46 @@ void GpioExpander::GpioExpanderServiceTask(void *parameter)
                     GpioExpanderButton *device = expander->GetButton(i);
                     if (device != nullptr && device->isUsed && device->pin == pin)
                     {
+                        
                         GpioExpanderButtonHandler(expander, pin, device, GPIOEXPANDERBUTTONS_PIN_STATE(allPins, device->pin));
                         break;
                     }
                 }
 
-                // check for rotary encoders
+                // process all rotary encoders
                 for (uint8_t i=0; i<expander->GetMaxRotaryEncoders(); i++)
                 {
                     GpioExpanderRotaryEncoder *device = expander->GetRotaryEncoder(i);
-                    if (device != nullptr && device->isUsed && (device->pin1 == pin || device->pin2 == pin))
+                    if (device != nullptr && device->isUsed)
                     {
-                        GpioExpanderRotaryEncoderHandler(expander, pin, device, 
+                        // Serial.print(millis());
+
+                        // Serial.print(": device ");
+                        // Serial.print(i);
+                        // Serial.print(" ");
+
+                        // Serial.print("p1 (");
+                        // Serial.print(device->pin1);
+                        // Serial.print (")=");
+                        // Serial.print((allPins & 1 << device->pin1)>0?"1":"0");
+                        // Serial.print(" p2 (");
+                        // Serial.print(device->pin2);
+                        // Serial.print (")=");
+                        // Serial.print((allPins & 1 << device->pin2)>0?"1":"0");
+
+                        // Serial.print("\tallPins=");
+                        // Serial.print("    0b ");
+                        // print_binary(allPins & 255);
+                        // Serial.println("");
+
+
+                        GpioExpanderRotaryEncoderHandler(expander, device, 
                                 GPIOEXPANDERBUTTONS_PIN_STATE(allPins, device->pin1), 
                                 GPIOEXPANDERBUTTONS_PIN_STATE(allPins, device->pin2));
-                        break;
+                        
                     }
                 }
+                Serial.println();
 
             }
 #if GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED == TRUE
@@ -295,6 +341,11 @@ void GpioExpander::clearInterrupts()
     _expander->clearInterrupts();
 }
 
+uint8_t GpioExpander::digitalRead(uint8_t pin)
+{
+    return _expander->digitalRead(pin);
+}
+
 GpioExpanderButton* GpioExpander::AddButton(uint8_t pin, uint8_t mode)
 {
     // validate the mode
@@ -321,15 +372,22 @@ GpioExpanderButton* GpioExpander::AddButton(uint8_t pin, uint8_t mode)
     return nullptr;
 }
 
-GpioExpanderRotaryEncoder* GpioExpander::AddRotaryEncoder (uint8_t pin1, uint8_t pin2)
+GpioExpanderRotaryEncoder* GpioExpander::AddRotaryEncoder (uint8_t pin1, uint8_t pin2, bool fullCycleBetweenDetents, unsigned long debounceMs)
 {
     for (uint8_t i=0; i<GetMaxRotaryEncoders(); i++)
     {
         if (_rotaryEncoders[i].isUsed == false)
         {
+            // this is an empty slot.  Initialize it
             _rotaryEncoders[i].pin1 = pin1;
             _rotaryEncoders[i].pin2 = pin2;
             _rotaryEncoders[i].isUsed = true;
+            _rotaryEncoders[i].fullCycleBetweenDetents = fullCycleBetweenDetents;
+            _rotaryEncoders[i].debounceMs = debounceMs;
+            _rotaryEncoders[i].pin1TimeMs = 0;
+            _rotaryEncoders[i].pin2TimeMs = 0;
+            _rotaryEncoders[i].index = i;
+
             return &_rotaryEncoders[i];
         }
         else if(_rotaryEncoders[i].pin1 == pin1 || _rotaryEncoders[i].pin2 == pin1 
@@ -341,5 +399,4 @@ GpioExpanderRotaryEncoder* GpioExpander::AddRotaryEncoder (uint8_t pin1, uint8_t
     }
     return nullptr;
 }
-
 #endif  // GPIOEXPANDERLIB_H

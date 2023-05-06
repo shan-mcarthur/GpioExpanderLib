@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "GpioLibDevProject",
+			"path": "dev/GpioLibDevProject"
+		}
+	],
+	"settings": {}
+}
