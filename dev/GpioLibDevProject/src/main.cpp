@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_MCP23X17.h>
+
+//#define GPIOEXPANDERLIB_PRINT_DEBUG FALSE
 #include "../../../src/GpioExpanderLib.h"
 
 // Pins for interrupt
@@ -19,9 +21,6 @@ void setup()
   
   // Configure pins
   pinMode(BUILTIN_LED, OUTPUT);
-  pinMode(32, OUTPUT);
-  pinMode(15, OUTPUT);
-  pinMode(33, OUTPUT);
 
   // initialize the MCP23x17 chip
   if (!mcp.begin_I2C()) 
@@ -34,8 +33,8 @@ void setup()
   rotaryDevices[0] = expander.AddRotaryEncoder(0, 1);
   expander.AddButton(2, CHANGE);
 
-  //rotaryDevices[1] = expander.AddRotaryEncoder(3, 4);
-  //expander.AddButton(5, CHANGE);
+  rotaryDevices[1] = expander.AddRotaryEncoder(3, 4);
+  expander.AddButton(5, CHANGE);
   expander.Init(&mcp, EXPANDER_INT_PIN);
 
   Serial.println ("");
@@ -89,34 +88,36 @@ void loop()
       encoder=1;
     }
 
-    // Serial.print(encoder);
-    // Serial.print("\t");
+     Serial.print(encoder);
+     Serial.print("\t");
+
+    // use tabs to keep motion separate
+    if (encoder == 1)
+    {
+      Serial.print ("\t");
+    }
 
     // dump the event details
     if (event.event == Clockwise)
     {
         dials[encoder]++;
-        // Serial.print (" >>>> ");
+        Serial.print (" >>>> ");
     }
     else
     {
         dials[encoder]--;
-        // Serial.print (" <<<< ");
+        Serial.print (" <<<< ");
     }
-    // Serial.print("\t\t");
-    // Serial.print(dials[0]);
-    // Serial.print(" : ");
-    // Serial.println(dials[1]);
 
-    if (event.event != Clockwise)
+    // use tabs to keep motion separate
+    if (encoder == 0)
     {
-      Serial.println ("******  ERROR *****");
-      Serial.print("device ");
-      Serial.print(event.device->index);
-      Serial.print(" ms=");
-      Serial.print(event.eventMillis);
-      Serial.println ("");
-      Serial.println ("");
+      Serial.print ("\t");
     }
+
+    Serial.print("\t\t");
+    Serial.print(dials[0]);
+    Serial.print(" : ");
+    Serial.println(dials[1]);
   }
 }

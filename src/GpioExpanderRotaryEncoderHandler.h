@@ -54,6 +54,7 @@ void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotary
 
     uint8_t delta = (positionIndex - lastPositionIndex) & 3;
 
+    #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
     Serial.print(now);
     Serial.print("= ");
 
@@ -81,7 +82,8 @@ void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotary
     Serial.print(delta);
 
     Serial.print (" : ");
-    
+    #endif
+
     GpioExpanderRotaryEncoderEventEnum direction;
 
     // check if the position has changed
@@ -101,7 +103,9 @@ void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotary
                 break;
             default:
                 // need to trust previous movement
+                #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
                 Serial.println ("jumped");
+                #endif
                 break;
         }
 
@@ -109,13 +113,18 @@ void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotary
         if(positionValue == 0 || positionValue == 3)
         {
             isEvent = true;
+            
+            #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
             Serial.print ("moved");
+            #endif
 
             event.event = device->lastMovement;
         }
         else
         {
+            #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
             Serial.print ("transitional");
+            #endif
         }
 
         device->lastMovementMs = now;
@@ -125,18 +134,25 @@ void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotary
     else
     {
         // no change
+        #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
         Serial.print ("no change");
+        #endif
     }
+
+    #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
     Serial.println();
+    #endif
 
     if (isEvent)
     {
         // send a rotary encoder movement to the queue
-        //xQueueSend( xGpioExpanderRotaryEncoderEventQueue, &event, portMAX_DELAY);
+        xQueueSend( xGpioExpanderRotaryEncoderEventQueue, &event, portMAX_DELAY);
 
+        #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
         Serial.println();
         Serial.print("Move ");
         Serial.print(device->index);
+        
         if(event.event == Clockwise)
         {
             Serial.println(" Clockwise");    
@@ -147,6 +163,7 @@ void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotary
 
         }
         Serial.println();
+        #endif
     }
 
     // Serial.println();

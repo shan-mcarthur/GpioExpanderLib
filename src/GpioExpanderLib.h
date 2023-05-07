@@ -4,61 +4,15 @@
 #include <Arduino.h>
 #include <Adafruit_MCP23X17.h>
 
-#define GPIOEXPANDER_MAX_EXPANDERS 8
+#include "GpioExpanderMacros.h"
+#include "GpioExpanderButtonTypes.h"
+#include "GpioExpanderRotaryEncoderTypes.h"
 
-// a couple of handy macros to deal with a single integer containing the buttons as bits (0-15)
-#define GPIOEXPANDERBUTTONS_PIN(i) (1<<i)
-#define GPIOEXPANDERBUTTONS_PIN_PRESSED(var,pos) (!((var) & (1<<(pos))))
-#define GPIOEXPANDERBUTTONS_PIN_STATE(var,pos) (((var) & (1<<(pos)))!=0?HIGH:LOW)
+#define GPIOEXPANDER_MAX_EXPANDERS 8
 
 // task notification and queue for interrupt and background processing
 static QueueHandle_t xGpioExpanderEventQueue;
 static TaskHandle_t xGpioExpanderTaskToNotify;
-
-void print_binary (uint8_t n)
-  {
-    uint8_t i;
-    for (i = 1 << 7; i > 0; i = i / 2)
-    {
-      if((n & i) != 0)
-      {
-        Serial.print("1");
-      }
-      else
-      {
-        Serial.print("0");
-      }
-    }
-  }
-
-struct GpioExpanderButton
-{
-    bool isUsed = false;
-    uint8_t pin;
-    uint8_t mode = LOW;  //CHANGE, LOW, or HIGH
-    uint8_t lastState;
-    unsigned long lastStateChange;
-};
-
-enum GpioExpanderRotaryEncoderEventEnum {Still, Clockwise, CounterClockwise};
-
-struct GpioExpanderRotaryEncoder
-{
-    bool isUsed = false;
-    uint8_t pin1 = 255;
-    uint8_t pin2 = 255;
-    bool fullCycleBetweenDetents = false;
-    unsigned long debounceMs = 0;
-    // unsigned long pin1TimeMs;
-    // unsigned long pin2TimeMs;
-    // unsigned long pin1TransitionTimeMs;
-    // unsigned long pin2TransitionTimeMs;
-    unsigned long lastMovementMs = 0;
-    uint8_t pin1State = 255;
-    uint8_t pin2State = 255;
-    uint8_t index = 255;
-    GpioExpanderRotaryEncoderEventEnum lastMovement = Still;
-};
 
 class GpioExpander
 {
@@ -131,6 +85,7 @@ struct GpioExpanderEvent
 
 #include "GpioExpanderButtonHandler.h"
 #include "GpioExpanderRotaryEncoderHandler.h"
+
 void GpioExpander::GpioExpanderServiceTask(void *parameter) 
 {
     uint16_t allPins;   //pin status while this interrupt occured
@@ -205,34 +160,12 @@ void GpioExpander::GpioExpanderServiceTask(void *parameter)
                     GpioExpanderRotaryEncoder *device = expander->GetRotaryEncoder(i);
                     if (device != nullptr && device->isUsed)
                     {
-                        // Serial.print(millis());
-
-                        // Serial.print(": device ");
-                        // Serial.print(i);
-                        // Serial.print(" ");
-
-                        // Serial.print("p1 (");
-                        // Serial.print(device->pin1);
-                        // Serial.print (")=");
-                        // Serial.print((allPins & 1 << device->pin1)>0?"1":"0");
-                        // Serial.print(" p2 (");
-                        // Serial.print(device->pin2);
-                        // Serial.print (")=");
-                        // Serial.print((allPins & 1 << device->pin2)>0?"1":"0");
-
-                        // Serial.print("\tallPins=");
-                        // Serial.print("    0b ");
-                        // print_binary(allPins & 255);
-                        // Serial.println("");
-
-
                         GpioExpanderRotaryEncoderHandler(expander, device, 
                                 GPIOEXPANDERBUTTONS_PIN_STATE(allPins, device->pin1), 
                                 GPIOEXPANDERBUTTONS_PIN_STATE(allPins, device->pin2));
                         
                     }
                 }
-                Serial.println();
 
             }
 #if GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED == TRUE
@@ -286,6 +219,8 @@ void GpioExpander::Init(Adafruit_MCP23X17 *expander, uint8_t interruptPin)
         }
     }
 
+    unsigned long now = millis();
+
     // configure each of the rotary encoders for expander interrupts
     for (int i=0; i<GetMaxRotaryEncoders(); i++)
     {
@@ -297,6 +232,11 @@ void GpioExpander::Init(Adafruit_MCP23X17 *expander, uint8_t interruptPin)
             _expander->setupInterruptPin(_rotaryEncoders[i].pin1, CHANGE);
             _expander->pinMode(_rotaryEncoders[i].pin2, INPUT_PULLUP);
             _expander->setupInterruptPin(_rotaryEncoders[i].pin2, CHANGE);
+
+            // get the current values from expander and seed in-memory ones
+            _rotaryEncoders[i].pin1State = _expander->digitalRead(_rotaryEncoders[i].pin1) == LOW?0:1;
+            _rotaryEncoders[i].pin2State = _expander->digitalRead(_rotaryEncoders[i].pin2) == LOW?0:1;
+            _rotaryEncoders[i].lastMovementMs = now;
         }
     }
 
