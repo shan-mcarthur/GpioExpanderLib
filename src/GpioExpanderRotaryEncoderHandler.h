@@ -1,84 +1,172 @@
 #ifndef GPIOEXPANDERROTARYENCODERHANDLER_H
 #define GPIOEXPANDERROTARYENCODERHANDLER_H
 
+// structure to define rotary movement and latch behavior
+// default is to latch on values of 0 and 3 (index of 1, 3)
+static uint8_t GpioExpanderRotaryMovement[4] = {2, 0, 1, 3};
+static uint8_t GpioExpanderRotaryMovements = 4;
+
 static QueueHandle_t xGpioExpanderRotaryEncoderEventQueue;
 
-enum GpioExpanderRotaryEncoderEventEnum {Clockwise, CounterClockwise};
+static uint8_t GpioExpanderRotaryEncoderFindPositionIndex (uint8_t positionValue)
+{
+    for (int i=0; i<4; i++)
+    {
+        if (positionValue == GpioExpanderRotaryMovement[i])
+        {
+            return i;
+        }
+    }
+    
+    // we should never get here
+    return 255;
+}
 
 struct GpioExpanderRotaryEncoderEvent
 {
     uint8_t pin;
     GpioExpanderRotaryEncoderEventEnum event;
     GpioExpander* expander;
+    GpioExpanderRotaryEncoder* device;
+    unsigned long eventMillis;
 };
 
-void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, uint8_t pin, GpioExpanderRotaryEncoder* device,  uint8_t pin1state, uint8_t pin2state) 
+void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotaryEncoder* device,  uint8_t pin1State, uint8_t pin2State) 
 {
     #if GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED == TRUE
     // flash the LED in debug mode
     digitalWrite(LED_BUILTIN, HIGH);
 #endif
     unsigned long now = millis();
+    bool isEvent = false;
+    
+    // stage the event
+    GpioExpanderRotaryEncoderEvent event;
+    event.expander = expander;
+    event.device = device;
+    event.eventMillis = now;
+
+    uint8_t positionValue = pin2State * 2 + pin1State;
+    uint8_t positionIndex = GpioExpanderRotaryEncoderFindPositionIndex(positionValue);
+
+    uint8_t lastPositionValue = device->pin2State * 2 + device->pin1State;
+    uint8_t lastPositionIndex = GpioExpanderRotaryEncoderFindPositionIndex(lastPositionValue);
+
+    uint8_t delta = (positionIndex - lastPositionIndex) & 3;
+
+    #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
+    Serial.print(now);
+    Serial.print("= ");
+
+    Serial.print("device ");
+    Serial.print(device->index);
+    Serial.print(": ");
+
+    Serial.print("ms = ");
+    Serial.print(device->lastMovementMs);
+    Serial.print (" : ");
+
+    Serial.print ("pos=");
+    Serial.print (positionValue);
+    Serial.print (" - ");
+
+    Serial.print ("index=");
+    Serial.print (positionIndex);
+    Serial.print (" : ");
+
+    Serial.print("last=");
+    Serial.print(lastPositionValue);
+    Serial.print (" : ");
+
+    Serial.print("delta=");
+    Serial.print(delta);
+
+    Serial.print (" : ");
+    #endif
+
     GpioExpanderRotaryEncoderEventEnum direction;
 
-    if (pin == device->pin1)
+    // check if the position has changed
+    if (positionValue != lastPositionValue)
     {
-        if (pin1state == LOW)
+        // we have some change in position
+        // calculate if we have moved forward or backwards
+        switch (delta)
         {
-            // record the event
-            device->pin1TimeMs = now;
+            case 1:
+                // we have moved forward one click
+                device->lastMovement = Clockwise;
+                break;
+            case 3:
+                // we have moved backwards one click
+                device->lastMovement = CounterClockwise;
+                break;
+            default:
+                // need to trust previous movement
+                #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
+                Serial.println ("jumped");
+                #endif
+                break;
+        }
 
-            if (device->pin2TimeMs != 0 && now - device->pin2TimeMs < 2000)
-            {
-                // we have an unprocessed pin2 drop that we are following.
-                // direction is backwards
-                GpioExpanderRotaryEncoderEvent event;
-                event.expander = expander;
-                event.pin = pin;
-                event.event = CounterClockwise;
+        // check if we are on an indent
+        if(positionValue == 0 || positionValue == 3)
+        {
+            isEvent = true;
+            
+            #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
+            Serial.print ("moved");
+            #endif
 
-                device->pin1TimeMs = 0;
-                device->pin2TimeMs = 0;
-
-                // send a rotary encoder movement to the queue
-                xQueueSend( xGpioExpanderRotaryEncoderEventQueue, &event, portMAX_DELAY);
-            }
+            event.event = device->lastMovement;
         }
         else
-        { 
-            // reset things if the pin goes up
-            device->pin1TimeMs = 0;
-        }
-    }
-    else if (pin == device->pin2)
-    {
-        if (pin2state == LOW)
         {
-            // record the event
-            device->pin2TimeMs = now;
+            #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
+            Serial.print ("transitional");
+            #endif
+        }
 
-            if (device->pin1TimeMs != 0 && now - device->pin1TimeMs < 2000)
-            {
-                // we have an unprocessed pin1 drop that we are following.
-                // direction is forwards
-                GpioExpanderRotaryEncoderEvent event;
-                event.expander = expander;
-                event.pin = pin;
-                event.event = Clockwise;
-                
-                device->pin1TimeMs = 0;
-                device->pin2TimeMs = 0;
+        device->lastMovementMs = now;
+        device->pin1State = pin1State;
+        device->pin2State = pin2State;
+    }
+    else
+    {
+        // no change
+        #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
+        Serial.print ("no change");
+        #endif
+    }
 
-                // send a rotary encoder movement to the queue
-                xQueueSend( xGpioExpanderRotaryEncoderEventQueue, &event, portMAX_DELAY);
-            }
+    #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
+    Serial.println();
+    #endif
+
+    if (isEvent)
+    {
+        // send a rotary encoder movement to the queue
+        xQueueSend( xGpioExpanderRotaryEncoderEventQueue, &event, portMAX_DELAY);
+
+        #ifdef GPIOEXPANDERLIB_PRINT_DEBUG
+        Serial.println();
+        Serial.print("Move ");
+        Serial.print(device->index);
+        
+        if(event.event == Clockwise)
+        {
+            Serial.println(" Clockwise");    
         }
         else
-        { 
-            // reset things if the pin goes up
-            device->pin2TimeMs = 0;
+        {
+            Serial.println(" Counter-Clockwise");    
+
         }
+        Serial.println();
+        #endif
     }
+
+    // Serial.println();
 
 #if GPIOEXPANDERBUTTONS_FLASH_BUILTIN_LED == TRUE
     // clear the LED flash in debug mode

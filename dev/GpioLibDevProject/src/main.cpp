@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_MCP23X17.h>
+
+//#define GPIOEXPANDERLIB_PRINT_DEBUG FALSE
 #include "../../../src/GpioExpanderLib.h"
 
 // Pins for interrupt
@@ -8,9 +10,10 @@
 // global variables for GPIO expander
 Adafruit_MCP23X17 mcp;
 GpioExpander expander;
+GpioExpanderRotaryEncoder* rotaryDevices[2];
 
 // global variable to handle dial value
-long dial;
+long dials[2];
 
 void setup() 
 {
@@ -27,9 +30,16 @@ void setup()
   }
 
   // initialize the button library with the set of pins to support as buttons
-  expander.AddRotaryEncoder(0, 1);
-  expander.AddButton(2);
+  rotaryDevices[0] = expander.AddRotaryEncoder(0, 1);
+  expander.AddButton(2, CHANGE);
+
+  rotaryDevices[1] = expander.AddRotaryEncoder(3, 4);
+  expander.AddButton(5, CHANGE);
   expander.Init(&mcp, EXPANDER_INT_PIN);
+
+  Serial.println ("");
+  Serial.println ("");
+
 }
 
 void loop() 
@@ -37,39 +47,77 @@ void loop()
   // process all pending butten events in the queue
   while (uxQueueMessagesWaiting(xGpioExpanderButtonEventQueue))
   {
-    // retrieve the next button event from the queue and process it
-    GpioExpanderButtonEvent event;
-
     // retrieve the event from the queue and obtain the pin info
+    GpioExpanderButtonEvent event;
     xQueueReceive(xGpioExpanderButtonEventQueue, &event, portMAX_DELAY);
-    
+
+    unsigned long now = micros();
+    Serial.print (now);
+
     // dump the event details
-    Serial.print ("pin ");
+    Serial.print (" pin ");
     Serial.print (event.pin);
-    Serial.println (" pressed");
+    if (event.event == Pressed)
+    {
+      Serial.println(" Pressed");
+    }
+    else
+    {
+      Serial.println(" Released");
+    }
   }
 
  // process all pending rotary encoder events in the queue
   while (uxQueueMessagesWaiting(xGpioExpanderRotaryEncoderEventQueue))
   {
-    // retrieve the next button event from the queue and process it
-    GpioExpanderRotaryEncoderEvent event;
-
     // retrieve the event from the queue and obtain the pin info
+    GpioExpanderRotaryEncoderEvent event;
     xQueueReceive(xGpioExpanderRotaryEncoderEventQueue, &event, portMAX_DELAY);
-    
-    // dump the event details
-    if (event.event == Clockwise)
+
+    unsigned long now = millis();
+    // Serial.print (now);
+    // Serial.print (": ");
+    int encoder;
+    // check which encoder this is
+    if (event.device == rotaryDevices[0])
     {
-        dial++;
-        Serial.print ("> ");
-        Serial.println (dial);
+      encoder=0;
     }
     else
     {
-        dial--;
-        Serial.print ("< ");
-        Serial.println (dial);
+      encoder=1;
     }
+
+     Serial.print(encoder);
+     Serial.print("\t");
+
+    // use tabs to keep motion separate
+    if (encoder == 1)
+    {
+      Serial.print ("\t");
+    }
+
+    // dump the event details
+    if (event.event == Clockwise)
+    {
+        dials[encoder]++;
+        Serial.print (" >>>> ");
+    }
+    else
+    {
+        dials[encoder]--;
+        Serial.print (" <<<< ");
+    }
+
+    // use tabs to keep motion separate
+    if (encoder == 0)
+    {
+      Serial.print ("\t");
+    }
+
+    Serial.print("\t\t");
+    Serial.print(dials[0]);
+    Serial.print(" : ");
+    Serial.println(dials[1]);
   }
 }

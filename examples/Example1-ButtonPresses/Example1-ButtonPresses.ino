@@ -28,14 +28,10 @@ void setup()
   }
 
   // initialize the button library with the set of pins to support as buttons
-  uint16_t pins = GPIOEXPANDERBUTTONS_PIN(0) 
-                | GPIOEXPANDERBUTTONS_PIN(1) 
-                | GPIOEXPANDERBUTTONS_PIN(2)
-                | GPIOEXPANDERBUTTONS_PIN(3);
   expander.AddButton(0);
-  expander.AddButton(1);
-  expander.AddButton(2);
-  expander.AddButton(3);
+  expander.AddButton(1, HIGH);
+  expander.AddButton(2, CHANGE);
+  expander.AddButton(3, LOW);
   expander.Init(&mcp, EXPANDER_INT_PIN);
 }
 
@@ -53,6 +49,13 @@ void loop()
     // dump the event details
     Serial.print ("pin ");
     Serial.print (event.pin);
-    Serial.println (" pressed");
+    if (event.event == Pressed)
+    {
+      Serial.println(" Pressed");
+    }
+    else
+    {
+      Serial.println(" Released");
+    }
   }
 }
