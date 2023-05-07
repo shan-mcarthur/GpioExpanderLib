@@ -1,9 +1,26 @@
 #ifndef GPIOEXPANDERROTARYENCODERHANDLER_H
 #define GPIOEXPANDERROTARYENCODERHANDLER_H
 
+// structure to define rotary movement and latch behavior
+// default is to latch on values of 0 and 3 (index of 1, 3)
+static uint8_t GpioExpanderRotaryMovement[4] = {2, 0, 1, 3};
+static uint8_t GpioExpanderRotaryMovements = 4;
+
 static QueueHandle_t xGpioExpanderRotaryEncoderEventQueue;
 
-enum GpioExpanderRotaryEncoderEventEnum {Clockwise, CounterClockwise};
+static uint8_t GpioExpanderRotaryEncoderFindPositionIndex (uint8_t positionValue)
+{
+    for (int i=0; i<4; i++)
+    {
+        if (positionValue == GpioExpanderRotaryMovement[i])
+        {
+            return i;
+        }
+    }
+    
+    // we should never get here
+    return 255;
+}
 
 struct GpioExpanderRotaryEncoderEvent
 {
@@ -29,10 +46,13 @@ void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotary
     event.device = device;
     event.eventMillis = now;
 
-    // Serial.print("pin1TimeMs=");
-    // Serial.print(device->pin1TimeMs);
-    // Serial.print(" pin2TimeMs=");
-    // Serial.println(device->pin2TimeMs);
+    uint8_t positionValue = pin2State * 2 + pin1State;
+    uint8_t positionIndex = GpioExpanderRotaryEncoderFindPositionIndex(positionValue);
+
+    uint8_t lastPositionValue = device->pin2State * 2 + device->pin1State;
+    uint8_t lastPositionIndex = GpioExpanderRotaryEncoderFindPositionIndex(lastPositionValue);
+
+    uint8_t delta = (positionIndex - lastPositionIndex) & 3;
 
     Serial.print(now);
     Serial.print("= ");
@@ -42,154 +62,77 @@ void GpioExpanderRotaryEncoderHandler(GpioExpander* expander, GpioExpanderRotary
     Serial.print(": ");
 
     Serial.print("ms = ");
-    Serial.print (device->pin1TimeMs);
-    Serial.print (" ");
-    Serial.print (device->pin2TimeMs);
+    Serial.print(device->lastMovementMs);
     Serial.print (" : ");
 
-    Serial.print("last = ");
-    Serial.print (device->pin1State);
-    Serial.print (" ");
-    Serial.print (device->pin2State);
+    Serial.print ("pos=");
+    Serial.print (positionValue);
+    Serial.print (" - ");
+
+    Serial.print ("index=");
+    Serial.print (positionIndex);
     Serial.print (" : ");
 
-    Serial.print("new = ");
-    Serial.print (pin1State);
-    Serial.print (" ");
-    Serial.print (pin2State);
+    Serial.print("last=");
+    Serial.print(lastPositionValue);
     Serial.print (" : ");
 
+    Serial.print("delta=");
+    Serial.print(delta);
+
+    Serial.print (" : ");
+    
     GpioExpanderRotaryEncoderEventEnum direction;
 
-    // check if pin1 has changed
-    if (pin1State != device->pin1State)
+    // check if the position has changed
+    if (positionValue != lastPositionValue)
     {
-        Serial.print("pin 1 ");
-        // Serial.print(pin1State);
-        // Serial.print(") ");
-        // Serial.print(device->pin1);
-        // Serial.print(" : ");
-
-        if (pin1State == LOW)
+        // we have some change in position
+        // calculate if we have moved forward or backwards
+        switch (delta)
         {
-            Serial.print("LOW ");
-            // record the event
-            device->pin1TimeMs = now;
+            case 1:
+                // we have moved forward one click
+                device->lastMovement = Clockwise;
+                break;
+            case 3:
+                // we have moved backwards one click
+                device->lastMovement = CounterClockwise;
+                break;
+            default:
+                // need to trust previous movement
+                Serial.println ("jumped");
+                break;
+        }
 
-            if (device->pin2TimeMs != 0 && now - device->pin2TimeMs < device->debounceMs)
-            {
-                // we have an unprocessed pin2 drop that we are following.
-                // direction is backwards
-                event.event = CounterClockwise;
-                isEvent = true;
-            }
-            else
-            {
-                // no recent event to follow, but clear the other timer
-                device->pin2TimeMs = 0;
-            }
+        // check if we are on an indent
+        if(positionValue == 0 || positionValue == 3)
+        {
+            isEvent = true;
+            Serial.print ("moved");
+
+            event.event = device->lastMovement;
         }
         else
-        { 
-            Serial.print("HIGH ");
-            if (device->fullCycleBetweenDetents)
-            {
-                // we can ignore the transitions back to high as this encoder has a full cycle HIGH->LOW->HIGH for every detent
-                Serial.write ("skip");
-
-                // reset things if the pin goes up
-                device->pin1TimeMs = 0;
-            }
-            else
-            {
-                // record the event
-                device->pin1TimeMs = now;
-
-                if (device->pin2TimeMs != 0 && now - device->pin2TimeMs < device->debounceMs)
-                {
-                // we have an unprocessed pin2 drop that we are following.
-                // direction is backwards
-                event.event = CounterClockwise;
-                isEvent = true;
-                }
-                else
-                {
-                    // no recent event to follow, but clear the other timer
-                    device->pin2TimeMs = 0;
-                }
-            }
-        }
-    }
-    else if (pin2State != device->pin2State)
-    {
-        Serial.print("pin 2 ");
-        if (pin2State == LOW)
         {
-            Serial.print("LOW ");
-            // record the event
-            device->pin2TimeMs = now;
-
-            if (device->pin1TimeMs != 0 && now - device->pin1TimeMs < device->debounceMs)
-            {
-                // we have an unprocessed pin1 drop that we are following.
-                // direction is forwards
-                event.event = Clockwise;
-                isEvent = true;
-            }
-            else
-            {
-                // no recent event to follow, but clear the other timer
-                device->pin1TimeMs = 0;
-            }
+            Serial.print ("transitional");
         }
-        else
-        { 
-            Serial.print("HIGH ");
-            if (device->fullCycleBetweenDetents)
-            {
-                // we can ignore the transitions back to high as this encoder has a full cycle HIGH->LOW->HIGH for every detent
-                Serial.write ("skip");
 
-                // reset things if the pin goes up
-                device->pin2TimeMs = 0;
-            }
-            else
-            {
-                // record the event
-                device->pin2TimeMs = now;
-
-                if (device->pin1TimeMs != 0 && now - device->pin1TimeMs < device->debounceMs)
-                {
-                // we have an unprocessed pin1 drop that we are following.
-                // direction is forward
-                event.event = Clockwise;
-                isEvent = true;
-                }
-                else
-                {
-                    // no recent event to follow, but clear the other timer
-                    device->pin1TimeMs = 0;
-                }
-            }
-
-        }
+        device->lastMovementMs = now;
+        device->pin1State = pin1State;
+        device->pin2State = pin2State;
     }
     else
     {
         // no change
-        Serial.print ("no change in pins");
+        Serial.print ("no change");
     }
     Serial.println();
-
-    device->pin1State = pin1State;
-    device->pin2State = pin2State;
 
     if (isEvent)
     {
         // send a rotary encoder movement to the queue
-        xQueueSend( xGpioExpanderRotaryEncoderEventQueue, &event, portMAX_DELAY);
-        device->pin1TimeMs = 0;
-        device->pin2TimeMs = 0;
+        //xQueueSend( xGpioExpanderRotaryEncoderEventQueue, &event, portMAX_DELAY);
 
         Serial.println();
         Serial.print("Move ");

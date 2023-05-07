@@ -34,8 +34,8 @@ void setup()
   rotaryDevices[0] = expander.AddRotaryEncoder(0, 1);
   expander.AddButton(2, CHANGE);
 
-  rotaryDevices[1] = expander.AddRotaryEncoder(3, 4);
-  expander.AddButton(5, CHANGE);
+  //rotaryDevices[1] = expander.AddRotaryEncoder(3, 4);
+  //expander.AddButton(5, CHANGE);
   expander.Init(&mcp, EXPANDER_INT_PIN);
 
   Serial.println ("");

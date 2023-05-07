@@ -40,20 +40,24 @@ struct GpioExpanderButton
     unsigned long lastStateChange;
 };
 
+enum GpioExpanderRotaryEncoderEventEnum {Still, Clockwise, CounterClockwise};
+
 struct GpioExpanderRotaryEncoder
 {
     bool isUsed = false;
-    uint8_t pin1;
-    uint8_t pin2;
-    bool fullCycleBetweenDetents;
-    unsigned long debounceMs;
-    unsigned long pin1TimeMs;
-    unsigned long pin2TimeMs;
-    unsigned long pin1TransitionTimeMs;
-    unsigned long pin2TransitionTimeMs;
-    uint8_t pin1State;
-    uint8_t pin2State;
-    uint8_t index;
+    uint8_t pin1 = 255;
+    uint8_t pin2 = 255;
+    bool fullCycleBetweenDetents = false;
+    unsigned long debounceMs = 0;
+    // unsigned long pin1TimeMs;
+    // unsigned long pin2TimeMs;
+    // unsigned long pin1TransitionTimeMs;
+    // unsigned long pin2TransitionTimeMs;
+    unsigned long lastMovementMs = 0;
+    uint8_t pin1State = 255;
+    uint8_t pin2State = 255;
+    uint8_t index = 255;
+    GpioExpanderRotaryEncoderEventEnum lastMovement = Still;
 };
 
 class GpioExpander
@@ -384,8 +388,6 @@ GpioExpanderRotaryEncoder* GpioExpander::AddRotaryEncoder (uint8_t pin1, uint8_t
             _rotaryEncoders[i].isUsed = true;
             _rotaryEncoders[i].fullCycleBetweenDetents = fullCycleBetweenDetents;
             _rotaryEncoders[i].debounceMs = debounceMs;
-            _rotaryEncoders[i].pin1TimeMs = 0;
-            _rotaryEncoders[i].pin2TimeMs = 0;
             _rotaryEncoders[i].index = i;
 
             return &_rotaryEncoders[i];
